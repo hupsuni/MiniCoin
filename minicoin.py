@@ -1,3 +1,12 @@
+"""
+TO RUN:
+1. Start Bootstrap Node: python3 minicoin.py --type bootstrap
+2. Start 1 or more Nodes or Miners:
+    Standalone Node: python3 minicoin.py --type node --port 5001
+    Mining Node (NO UI): python3 minicoin.py --type node --port 5002 --mine
+3. Start a Node with a UI (Incomplete)
+    Node with UI: python3 minicoin.py --type node-ui --port 5003
+"""
 import getopt
 import math
 import sys
@@ -573,7 +582,7 @@ if __name__ == '__main__':
             node.start_server()
             if option_dict["--mine"] is not None:
                 node.start_mining()
-        elif option_dict["--type"] == "client" and option_dict["--port"] is not None:
+        elif option_dict["--type"] == "node-ui" and option_dict["--port"] is not None:
             node = ClientInterface(int(option_dict["--port"]))
             node.start_server()
             node.client_interface()
