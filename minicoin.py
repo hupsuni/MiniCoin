@@ -10,6 +10,7 @@ from socket_class import SocketManager
 import random
 import threading
 from bootstrap import BootStrap
+from genesis_block import GenesisBlock
 
 
 class Transaction:
@@ -116,7 +117,10 @@ class Ledger:
 
     def __init__(self):
         self.block_chain = []
-        # TODO - Add genesis block
+        self.block_chain.append(Block(GenesisBlock.block_id,
+                                      [Transaction(GenesisBlock.genesis_transaction_id,
+                                                   GenesisBlock.genesis_transaction_string)],
+                                      GenesisBlock.previous_block_hash, GenesisBlock.nonce))
 
     def size(self):
         """
@@ -284,15 +288,15 @@ class MiniCoin:
         self.port = port
         self.address_string = "127.0.0.1:%s" % str(port)
         self.socket_manager = SocketManager(self, port=int(port))
-        self.get_peers_from_bootstrap()
 
     def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
-        bootstrap_connection_info = connection_string.split(":")
-        MiniCoin.peers = self.socket_manager.send_message(bootstrap_connection_info[0],
-                                                          int(bootstrap_connection_info[1]),
-                                                          "connect,%s" % str(connection_quantity))
+        peers = self.send_message(connection_string, "connect", str(connection_quantity))
+        if peers[0] == "nodes" and type(peers) == list and len(peers) > 1:
+            for address in peers[1:]:
+                MiniCoin.peers.append(address)
 
     def start_server(self):
+        self.get_peers_from_bootstrap()
         self.socket_manager.listen()
 
     def stop_server(self):
@@ -311,13 +315,15 @@ class MiniCoin:
             str: The response from the target.
         """
         address = address_string.split(":")
-        separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
+        separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) + \
+                            SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
         response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
         if response == "CONNECTION ERROR":
             if address_string in MiniCoin.peers:
                 MiniCoin.peers.remove(address_string)
-        if len(MiniCoin.peers) == 0:
+        if len(MiniCoin.peers) == 0 and command != "connect":
             self.get_peers_from_bootstrap()
+        return response.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
 
     def got_message(self, address, message):
         """
@@ -335,9 +341,13 @@ class MiniCoin:
                 - "new block"
                 - "new transaction"
                 - "send ledger"
-
+                - "check ledger"
         """
         parsed_message = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
+        if "127.0.0.1:%s" % parsed_message[1] not in MiniCoin.peers and len(MiniCoin.peers) < MiniCoin.MAX_CONNECTIONS:
+            MiniCoin.semaphore.acquire()
+            MiniCoin.peers.append("127.0.0.1:%s" % parsed_message[1])
+            MiniCoin.semaphore.release()
         if parsed_message[0] == "new block":
             self.__got_new_block(Block.block_from_string(parsed_message[2]))
         elif parsed_message[0] == "new transaction":
@@ -394,6 +404,7 @@ class MiniCoin:
                 block_hash = HashFunctions.hash_input(mining_block)
                 if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN and MiniCoin.no_new_block:
                     mining_block.block_hash = block_hash
+                    print("New block discovered:\n%s" % str(mining_block))
                     self.__announce_minted_block(mining_block)
             time.sleep(1)
         return None
@@ -457,16 +468,19 @@ class MiniCoin:
 
     def __got_new_transaction(self, transaction):
         MiniCoin.semaphore.acquire()
-        if MiniCoin.mem_pool.add_tx(transaction):
-            self.announce_transaction(transaction)
+        is_new = MiniCoin.mem_pool.add_tx(transaction)
         MiniCoin.semaphore.release()
+        if is_new:
+            self.announce_transaction(transaction)
 
     def __got_new_block(self, block):
-        MiniCoin.semaphore.acquire()
-        if self.validate_block(block):
+        is_new = self.validate_block(block)
+        if is_new:
+            print("New block received:\n%s" % str(block))
+            MiniCoin.semaphore.acquire()
             MiniCoin.ledger.add_block(block)
+            MiniCoin.semaphore.release()
             self.propagate_block(block)
-        MiniCoin.semaphore.release()
 
     def sync_ledger(self):
         # Make threads for each connection.
@@ -508,10 +522,10 @@ class MiniCoin:
         return "%s:%s:%s" % (blockchain_length, head_block_hash, genesis_hash)
 
     def request_ledger(self, target_address_string):
-        MiniCoin.semaphore.acquire()
         MiniCoin.ledger_sync = False
         response = self.send_message(target_address_string, "send ledger")
         peer_ledger = Ledger.ledger_from_string(response)
+        MiniCoin.semaphore.acquire()
         MiniCoin.ledger.replace_blockchain(peer_ledger)
         MiniCoin.ledger_sync = True
         MiniCoin.semaphore.release()
@@ -532,10 +546,11 @@ class ClientInterface(MiniCoin):
 if __name__ == '__main__':
     # Parse CLI arguments
     argv = sys.argv[1:]
-    options, arguments = getopt.getopt(argv, "", ["port=", "type="])
+    options, arguments = getopt.getopt(argv, "", ["port=", "type=", "mine"])
     option_dict = {
         "--port": None,
-        "--type": None
+        "--type": None,
+        "--mine": None
     }
     for option in options:
         option_dict[option[0]] = option[1]
@@ -549,6 +564,8 @@ if __name__ == '__main__':
             print("Starting node")
             node = MiniCoin(int(option_dict["--port"]))
             node.start_server()
+            if option_dict["--mine"] is not None:
+                node.start_mining()
         elif option_dict["--type"] == "client" and option_dict["--port"] is not None:
             node = ClientInterface(int(option_dict["--port"]))
             node.start_server()
@@ -560,20 +577,20 @@ if __name__ == '__main__':
         node.stop_server()
 
     # TODO - Delete this, only used for testing atm.
-    random.seed()
-    genesis_tx_hash = HashFunctions.hash_input("genesis")
-    genesis_transaction = Transaction(genesis_tx_hash, "genesis")
-    genesis = Block(0, [genesis_transaction], "0")
-    start_time = datetime.now()
-    count = 0
-    total_time = 0
-    while count < 20:
-        rand_num = random.random()
-        genesis.nonce = rand_num
-        hash_value = HashFunctions.hash_input(genesis)
-        if hash_value[:6] == "00ff00":
-            print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, datetime.now() - start_time))
-            count += 1
-            total_time += int((datetime.now() - start_time).microseconds)
-            start_time = datetime.now()
-    print("Avg time: %s" % str(total_time / 20))
+    # random.seed()
+    # genesis_tx_hash = HashFunctions.hash_input("genesis")
+    # genesis_transaction = Transaction(genesis_tx_hash, "genesis")
+    # genesis = Block(0, [genesis_transaction], "0")
+    # start_time = datetime.now()
+    # count = 0
+    # total_time = 0
+    # while count < 20:
+    #     rand_num = random.random()
+    #     genesis.nonce = rand_num
+    #     hash_value = HashFunctions.hash_input(genesis)
+    #     if hash_value[:6] == "00ff00":
+    #         print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, datetime.now() - start_time))
+    #         count += 1
+    #         total_time += int((datetime.now() - start_time).microseconds)
+    #         start_time = datetime.now()
+    # print("Avg time: %s" % str(total_time / 20))
