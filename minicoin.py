@@ -372,8 +372,10 @@ class MiniCoin:
         # Shoot off a thread to mine on, thread will repeat until this function ends on user input.
         MiniCoin.no_new_block = True
         MiniCoin.active_mining = True
+        time.sleep(.1)
         threading.Thread(target=self.__threaded_miner, args=[block]).start()
         print("Press ENTER to stop mining at any time!")
+        input()
         MiniCoin.active_mining = False
 
     def __threaded_miner(self, block=None):
@@ -388,6 +390,7 @@ class MiniCoin:
                 A newly minted block. Returns None if loop is exited without solving the block.
         """
         # Loop until user input.
+        random.seed()
         while MiniCoin.active_mining:
             # Generate a new block to test random nonce on.
             if block is None:
@@ -419,6 +422,7 @@ class MiniCoin:
         Returns:
             bool: True if block is found valid, False otherwise.
         """
+        print("Validating new block:\n%s" % str(block))
         hash_to_validate = block.block_hash
         current_head_block = MiniCoin.ledger.get_last_block()
         # All the following requirements must be met for this block to be a valid head of the current ledger.

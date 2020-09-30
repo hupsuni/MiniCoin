@@ -25,7 +25,6 @@ class BootStrap:
         self.socket_manager.listen()
 
     def got_message(self, address, message):
-        print(message)
         ret_message = "None"
         message_csv = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
         if message_csv[0] == "connect" or message_csv[0] == "client connect":
