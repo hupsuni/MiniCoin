@@ -319,7 +319,7 @@ class MiniCoin:
 
     def got_message(self, address, message):
         """
-        Callback function for when a message is recieved over sockets.
+        Callback function for when a message is received over sockets.
 
         Args:
             address: The address of the sender.
@@ -534,7 +534,7 @@ if __name__ == '__main__':
     genesis_tx_hash = HashFunctions.hash_input("genesis")
     genesis_transaction = Transaction(genesis_tx_hash, "genesis")
     genesis = Block(0, [genesis_transaction], "0")
-    start_time = time.now()
+    start_time = datetime.now()
     count = 0
     total_time = 0
     while count < 20:
@@ -542,8 +542,8 @@ if __name__ == '__main__':
         genesis.nonce = rand_num
         hash_value = HashFunctions.hash_input(genesis)
         if hash_value[:6] == "00ff00":
-            print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, time.now() - start_time))
+            print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, datetime.now() - start_time))
             count += 1
-            total_time += int((time.now() - start_time).microseconds)
-            start_time = time.now()
+            total_time += int((datetime.now() - start_time).microseconds)
+            start_time = datetime.now()
     print("Avg time: %s" % str(total_time / 20))
