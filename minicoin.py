@@ -268,7 +268,7 @@ class HashFunctions:
         return hashed.hexdigest()
 
 
-class MiniCoin:
+class MiniCoin:  # TODO - Make a ledger syncing thread
     """
     The MiniCoin Nodes represented as a class.
     """
@@ -377,6 +377,7 @@ class MiniCoin:
         print("Press ENTER to stop mining at any time!")
         input()
         MiniCoin.active_mining = False
+        print("Miner stopping.")
 
     def __threaded_miner(self, block=None):
         """
@@ -392,6 +393,7 @@ class MiniCoin:
         # Loop until user input.
         random.seed()
         while MiniCoin.active_mining:
+            print("Mining blocks in new thread...")
             # Generate a new block to test random nonce on.
             if block is None:
                 mining_block = Block(MiniCoin.ledger.size(), MiniCoin.mem_pool.get_n_tx(Block.TRANSACTIONS_PER_BLOCK),
@@ -467,6 +469,7 @@ class MiniCoin:
             MiniCoin.semaphore.acquire()
             MiniCoin.no_new_block = False
             MiniCoin.ledger.add_block(block)
+            MiniCoin.no_new_block = True
             MiniCoin.semaphore.release()
             self.propagate_block(block)
 
@@ -538,7 +541,7 @@ class MiniCoin:
         return str(MiniCoin.ledger)
 
 
-class ClientInterface(MiniCoin):
+class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.
     def __init__(self, port):
         super().__init__(port)
         self.start_server()
