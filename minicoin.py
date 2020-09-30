@@ -34,6 +34,11 @@ class Transaction:
                 return True
         return False
 
+    @staticmethod
+    def transaction_from_string(transaction_string):
+        split_tx_string = transaction_string.split(", ")
+        return Transaction(split_tx_string[0], split_tx_string[1])
+
 
 class MemPool:
     """
@@ -69,15 +74,18 @@ class MemPool:
             tx: List of Transactions.
 
         """
+        transaction_is_new = False
         if type(tx) is Transaction:
             tx_list = [tx]
         elif type(tx) is list:
             tx_list = tx
         else:
-            return False
+            return transaction_is_new
         for transaction in tx_list:
             if transaction not in self.tx:
                 self.tx.append(transaction)
+                transaction_is_new = True
+        return transaction_is_new
 
     def purge_confirmed_tx(self, tx):
         """
@@ -144,8 +152,28 @@ class Ledger:
         """
         return self.block_chain[0]
 
+    def __str__(self):
+        return_string = "LEDGER:"
+        for block in self.block_chain:
+            return_string += "BLOCK:" + str(block)
+        return_string += "BLOCK:LEDGER:"
+        return return_string
 
-class Block:  # TODO - Change self.ledger to MiniCoin.ledger for threading
+    @staticmethod
+    def ledger_from_string(ledger_string):
+        ledger_list = []
+        ledger_array = ledger_string.split("BLOCK:")
+        if ledger_array[0] == "LEDGER:" and ledger_array[-1] == "LEDGER:":
+            for block in ledger_array[1:-1]:
+                ledger_list.append(Block.block_from_string(block))
+        return ledger_array.copy()
+
+    def replace_blockchain(self, block_chain):
+        if len(block_chain) > len(self.block_chain):
+            self.block_chain = block_chain.copy()
+
+
+class Block:
     """
     Class to represent one block, used for both the Ledger and for Mining.
     """
@@ -215,10 +243,20 @@ class HashFunctions:
     """
     Static hashing helper methods.
     """
+    # Average time to mine based on 20 random attempts on genesis block: 422768.05 microseconds.
 
     @staticmethod
-    def hash_input(block):
-        hashed = sha3_256(str(block).encode())
+    def hash_input(hash_me):
+        """
+        Returns the hash of any object that responds to the __str__ function.
+
+        Args:
+            hash_me: The object to be hashed.
+
+        Returns:
+            str: The hex digest of the hash of the given item.
+        """
+        hashed = sha3_256(str(hash_me).encode())
         return hashed.hexdigest()
 
 
@@ -239,7 +277,8 @@ class MiniCoin:
     def __init__(self, port):
         self.port = port
         self.address_string = "127.0.0.1:%s" % str(port)
-        self.socket_manager = SocketManager(self, port=port)
+        self.socket_manager = SocketManager(self, port=int(port))
+        self.get_peers_from_bootstrap()
 
     def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
         bootstrap_connection_info = connection_string.split(":")
@@ -289,9 +328,19 @@ class MiniCoin:
             Valid messages begin with one of the following strings before the first separator.
                 - "new block"
                 - "new transaction"
+                - "send ledger"
 
         """
-        pass
+        parsed_message = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
+        if parsed_message[0] == "new block":
+            self.__got_new_block(Block.block_from_string(parsed_message[2]))
+        elif parsed_message[0] == "new transaction":
+            self.__got_new_transaction(Transaction.transaction_from_string(parsed_message[2]))
+        elif parsed_message[0] == "check ledger":
+            return self.check_ledger()
+        elif parsed_message[0] == "send ledger":
+            return self.send_ledger()
+        return "COMPLETE"
 
     def start_mining(self, block=None):
         """
@@ -322,17 +371,17 @@ class MiniCoin:
         random.seed()
         # Generate a new block to test random nonce on.
         if block is None:
-            mining_block = Block(self.ledger.size(), self.mem_pool.get_n_tx(Block.TRANSACTIONS_PER_BLOCK),
-                                 self.ledger.get_last_block().block_hash)
+            mining_block = Block(MiniCoin.ledger.size(), MiniCoin.mem_pool.get_n_tx(Block.TRANSACTIONS_PER_BLOCK),
+                                 MiniCoin.ledger.get_last_block().block_hash)
         else:
             mining_block = block
-        while MiniCoin.no_new_block and MiniCoin.ledger_sync and mining_block == self.ledger.size():
+        while MiniCoin.no_new_block and MiniCoin.ledger_sync and mining_block == MiniCoin.ledger.size():
             # While a block has not been found and node considers its ledger up to date, generate a random nonce,
             # has the mining block and if it conforms to the hash pattern return it, otherwise repeat.
             random_nonce = random.random()
             mining_block.nonce = random_nonce
             block_hash = HashFunctions.hash_input(mining_block)
-            if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN:
+            if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN and MiniCoin.no_new_block:
                 mining_block.block_hash = block_hash
                 self.__announce_minted_block(mining_block)
         return None
@@ -348,9 +397,9 @@ class MiniCoin:
             bool: True if block is found valid, False otherwise.
         """
         hash_to_validate = block.block_hash
-        current_head_block = self.ledger.get_last_block()
+        current_head_block = MiniCoin.ledger.get_last_block()
         # All the following requirements must be met for this block to be a valid head of the current ledger.
-        if self.ledger.size() > 1 and block.block_id == current_head_block.block_id + 1 and \
+        if MiniCoin.ledger.size() >= 1 and block.block_id == current_head_block.block_id + 1 and \
                 block.previous_block_hash == current_head_block.block_hash and \
                 HashFunctions.hash_input(block) == block.block_hash and \
                 hash_to_validate[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN:
@@ -389,16 +438,38 @@ class MiniCoin:
         """
         if self.validate_block(block):
             MiniCoin.no_new_block = False
-            self.ledger.add_block(block)
+            MiniCoin.ledger.add_block(block)
+            self.propagate_block(block)
 
     def __got_new_transaction(self, transaction):
-        pass
+        if MiniCoin.mem_pool.add_tx(transaction):
+            self.announce_transaction(transaction)
 
     def __got_new_block(self, block):
-        pass
+        if self.validate_block(block):
+            MiniCoin.ledger.add_block(block)
+            self.propagate_block(block)
 
     def sync_ledger(self):
+        # Make threads for each connection
+        # connect to the node with longest blockchain and request it if greater than current.
         pass
+
+    def check_ledger(self):
+        genesis_hash = MiniCoin.ledger.get_genesis_block().block_hash
+        head_block_hash = MiniCoin.ledger.get_last_block().block_hash
+        blockchain_length = str(MiniCoin.ledger.size())
+        return "%s:%s:%s" % (blockchain_length, head_block_hash, genesis_hash)
+
+    def request_ledger(self, target_address_string):
+        MiniCoin.ledger_sync = False
+        response = self.send_message(target_address_string, "send ledger")
+        peer_ledger = Ledger.ledger_from_string(response)
+        MiniCoin.ledger.replace_blockchain(peer_ledger)
+        MiniCoin.ledger_sync = True
+
+    def send_ledger(self):
+        return str(MiniCoin.ledger)
 
 
 if __name__ == '__main__':
@@ -413,15 +484,20 @@ if __name__ == '__main__':
         option_dict[option[0]] = option[1]
 
     # TODO - Delete this, only used for testing atm.
-    random.seed()
-    genesis_tx_hash = HashFunctions.hash_input("genesis")
-    genesis_transaction = Transaction(genesis_tx_hash, "genesis")
-    genesis = Block(0, [genesis_transaction], "0")
-    start_time = time.now()
-    while True:
-        rand_num = random.random()
-        genesis.nonce = rand_num
-        hash_value = HashFunctions.hash_input(genesis)
-        if hash_value[:6] == "00ff00":
-            print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, time.now() - start_time))
-            break
+    # random.seed()
+    # genesis_tx_hash = HashFunctions.hash_input("genesis")
+    # genesis_transaction = Transaction(genesis_tx_hash, "genesis")
+    # genesis = Block(0, [genesis_transaction], "0")
+    # start_time = time.now()
+    # count = 0
+    # total_time = 0
+    # while count < 20:
+    #     rand_num = random.random()
+    #     genesis.nonce = rand_num
+    #     hash_value = HashFunctions.hash_input(genesis)
+    #     if hash_value[:6] == "00ff00":
+    #         print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, time.now() - start_time))
+    #         count += 1
+    #         total_time += int((time.now() - start_time).microseconds)
+    #         start_time = time.now()
+    # print("Avg time: %s" % str(total_time / 20))
