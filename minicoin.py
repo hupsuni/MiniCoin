@@ -9,6 +9,7 @@ from custom_exceptions import NoNonceException
 from socket_class import SocketManager
 import random
 import threading
+from bootstrap import BootStrap
 
 
 class Transaction:
@@ -245,6 +246,7 @@ class HashFunctions:
     """
     Static hashing helper methods.
     """
+
     # Average time to mine based on 20 random attempts on genesis block: 422768.05 microseconds.
 
     @staticmethod
@@ -518,6 +520,15 @@ class MiniCoin:
         return str(MiniCoin.ledger)
 
 
+class ClientInterface(MiniCoin):
+    def __init__(self, port):
+        super().__init__(port)
+        self.start_server()
+
+    def client_interface(self):
+        pass
+
+
 if __name__ == '__main__':
     # Parse CLI arguments
     argv = sys.argv[1:]
@@ -528,6 +539,25 @@ if __name__ == '__main__':
     }
     for option in options:
         option_dict[option[0]] = option[1]
+    node = None
+    try:
+        if option_dict["--type"] == "bootstrap":
+            print("Starting bootstrap server")
+            node = BootStrap()
+            node.run()
+        elif option_dict["--type"] == "node" and option_dict["--port"] is not None:
+            print("Starting node")
+            node = MiniCoin(int(option_dict["--port"]))
+            node.start_server()
+        elif option_dict["--type"] == "client" and option_dict["--port"] is not None:
+            node = ClientInterface(int(option_dict["--port"]))
+            node.start_server()
+            node.client_interface()
+        else:
+            print("Please specify a --type as \"bootstrap\", \"node\" or \"client\"!\n"
+                  "If not starting a bootstrap node you must also specify a port number to listen on.")
+    except KeyboardInterrupt:
+        node.stop_server()
 
     # TODO - Delete this, only used for testing atm.
     random.seed()

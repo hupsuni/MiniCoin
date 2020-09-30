@@ -15,6 +15,12 @@ class BootStrap:
         self.socket_manager = SocketManager(self, ip=ip, port=port)
         self.node_list = []
 
+    def start_server(self):
+        self.run()
+
+    def stop_server(self):
+        self.socket_manager.stop_server()
+
     def run(self):
         self.socket_manager.listen()
 
