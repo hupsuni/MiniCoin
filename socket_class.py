@@ -102,7 +102,7 @@ class SocketManager:
             return response.decode()
         except (ConnectionRefusedError, AttributeError, socket.timeout, ConnectionError) as e:
             print("%s" % e)
-            return_value = None
+            return_value = "CONNECTION ERROR"
         finally:
             socket_connection.close()
         return return_value
