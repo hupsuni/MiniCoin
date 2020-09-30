@@ -9,7 +9,13 @@ from time import sleep
 
 
 class SocketManager:
+    """
+    Warnings:
+        Requires implementing classes to define a callback class that implements a
+        "got_message(self, address, message)" function.
+    """
     DEFAULT_IP = "127.0.0.1"
+    MESSAGE_SEPARATOR_PATTERN = "-----"
     DEFAULT_PORT = 5000
     DEFAULT_PACKET_SIZE = 4096
     DEFAULT_IDLE_TIMEOUT = 30
@@ -38,7 +44,6 @@ class SocketManager:
 
     def __listen_loop(self):
         try:
-
             while SocketManager.run is True:
                 self.socket.settimeout(self.__timeout)
                 try:
@@ -68,7 +73,6 @@ class SocketManager:
                         break
                     if message is not None:
                         response = str(self.callback.got_message(address, message.decode()))
-                        # message_csv = message.decode().split(",")
                         client.sendall(response.encode())
                         break
                     else:
@@ -84,10 +88,12 @@ class SocketManager:
         Takes a string message and sends it to remote server, returning the response.
 
         Args:
+            ip(str): IP address to connect to as string.
+            port(int): Port number to connect to.
             message(str): The message to send, encrypted, to the remote server.
 
         Returns:
-            str: The response of the server, decrypted, or None on error.
+            str: The response of the server or None on error.
          """
         socket_connection = None
         try:
@@ -106,3 +112,6 @@ class SocketManager:
         finally:
             socket_connection.close()
         return return_value
+
+    def stop_server(self):
+        SocketManager.run = False

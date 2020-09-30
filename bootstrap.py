@@ -20,15 +20,25 @@ class BootStrap:
 
     def got_message(self, address, message):
         ret_message = "None"
-        message_csv = message.split(",")
-        if message_csv[0] == "connect":
-            if len(self.node_list) != 0:
-                ret_message = str(random.choice(self.node_list))
-            if address not in self.node_list:
+        message_csv = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
+        if message_csv[0] == "connect" or message_csv[0] == "client connect":
+            num_connections = int(message_csv[2])
+            if len(self.node_list) <= num_connections:
+                connection_list = self.node_list.copy()
+            else:
+                random.seed()
+                index = random.randint(0, len(self.node_list))
+                connection_list = []
+                for i in range(0, num_connections):
+                    selected_node_index = (index + i) % len(self.node_list)
+                    connection_list.append(self.node_list[selected_node_index])
+            ret_message = "nodes"
+            for details in connection_list:
+                ret_message += SocketManager.MESSAGE_SEPARATOR_PATTERN + str(details)
+
+            if address not in self.node_list and message_csv != "client connect":
                 self.node_list.append(str(address[0]) + ":" + str(message_csv[1]))
                 print("New connection from: %s" % str(address))
-        elif message_csv[0] == "client connect":
-            ret_message = str(random.choice(self.node_list))
         return ret_message
 
     def get_node_list(self):

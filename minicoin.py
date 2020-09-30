@@ -91,6 +91,14 @@ class Ledger:
         if block.block_id == len(self.block_chain):
             self.block_chain.append(block)
 
+    def get_genesis_block(self):
+        """
+        Returns the first block in the blockchain, known as the genesis block.
+
+        Returns:
+            Block: First block in the blockchain, known as the genesis block.
+        """
+        return self.block_chain[0]
 
 class Block:  # TODO - Change self.ledger to MiniCoin.ledger for threading
     """
@@ -176,18 +184,33 @@ class MiniCoin:
 
     DEFAULT_BOOTSTRAP_NODE = "127.0.0.1:5000"
     HASH_PATTERN = "00ff00"
+    MAX_CONNECTIONS = 5
     ledger_sync = True
-    no_new_block = True
+    no_new_block = False
     ledger = Ledger()
     mem_pool = MemPool()
+    peers = []
 
     def __init__(self, port):
-        self.connections = []
         self.port = port
         self.address_string = "127.0.0.1:%s" % str(port)
         self.socket_manager = SocketManager(self, port=port)
 
-    def send_message(self):
+    def get_peers_from_bootsrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
+        bootstrap_connection_info = connection_string.split(":")
+        random_node = self.socket_manager.send_message(bootstrap_connection_info[0], int(bootstrap_connection_info[1]),
+                                                       "connect,%s" % str(connection_quantity))
+
+    def start_server(self):
+        self.socket_manager.listen()
+
+    def stop_server(self):
+        self.socket_manager.stop_server()
+
+    def send_message(self, address_string, command, message):
+        address = address_string.split(":")
+        separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
+        self.socket_manager.send_message(address[0], int(address[1]), separated_message)
         """
         Sends a message over sockets and returns the response.
         """
@@ -203,6 +226,12 @@ class MiniCoin:
 
         Returns:
             Some response based on message received.
+
+        Notes:
+            Valid messages begin with one of the following strings before the first separator.
+                - "new block"
+                - "new transaction"
+
         """
         pass
 
