@@ -1,6 +1,7 @@
 import getopt
 import math
 import sys
+from datetime import datetime as time
 from hashlib import sha3_256
 from custom_exceptions import NoNonceException
 from socket_class import SocketManager
@@ -12,6 +13,7 @@ class Transaction:
     """
     Class to act as a single transaction.
     """
+
     def __init__(self, tx_id, tx_data):
         """
         Initialize a simple transaction, oversimplification of transactions represented as strings and IDs.
@@ -25,6 +27,12 @@ class Transaction:
 
     def __str__(self):
         return "%s, %s" % (str(self.tx_id), str(self.tx_data))
+
+    def __eq__(self, other):
+        if type(other) == type(self):
+            if self.tx_id == other.tx_id and self.tx_data == other.tx_data:
+                return True
+        return False
 
 
 class MemPool:
@@ -54,11 +62,47 @@ class MemPool:
                 return_tx.append(transaction)
         return return_tx
 
+    def add_tx(self, tx):
+        """
+        Adds a list of transactions to the mem pool, supports single transactions.
+        Args:
+            tx: List of Transactions.
+
+        """
+        if type(tx) is Transaction:
+            tx_list = [tx]
+        elif type(tx) is list:
+            tx_list = tx
+        else:
+            return False
+        for transaction in tx_list:
+            if transaction not in self.tx:
+                self.tx.append(transaction)
+
+    def purge_confirmed_tx(self, tx):
+        """
+        Removes a list of transactions from the mem pool, supports single transactions.
+
+        Args:
+            tx: List of Transactions.
+
+        """
+        if type(tx) is Transaction:
+            tx_list = [tx]
+        elif type(tx) is list:
+            tx_list = tx
+        else:
+            return False
+        for transaction in tx_list:
+            if transaction in self.tx:
+                self.tx.remove(transaction)
+
 
 class Ledger:
     """
     The block chain.
     """
+
     def __init__(self):
         self.block_chain = []
         # TODO - Add genesis block
@@ -99,6 +143,7 @@ class Ledger:
             Block: First block in the blockchain, known as the genesis block.
         """
         return self.block_chain[0]
+
 
 class Block:  # TODO - Change self.ledger to MiniCoin.ledger for threading
     """
@@ -162,7 +207,7 @@ class Block:  # TODO - Change self.ledger to MiniCoin.ledger for threading
         for transaction in parameters[3:]:
             tx_data = transaction.split(", ")
             tx_list.append(Transaction(tx_data[0], tx_data[1]))
-        reconstructed_block = Block(int(parameters[0]), tx_list,  parameters[2], nonce=float(parameters[1]))
+        reconstructed_block = Block(int(parameters[0]), tx_list, parameters[2], nonce=float(parameters[1]))
         return reconstructed_block
 
 
@@ -196,10 +241,11 @@ class MiniCoin:
         self.address_string = "127.0.0.1:%s" % str(port)
         self.socket_manager = SocketManager(self, port=port)
 
-    def get_peers_from_bootsrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
+    def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
         bootstrap_connection_info = connection_string.split(":")
-        random_node = self.socket_manager.send_message(bootstrap_connection_info[0], int(bootstrap_connection_info[1]),
-                                                       "connect,%s" % str(connection_quantity))
+        MiniCoin.peers = self.socket_manager.send_message(bootstrap_connection_info[0],
+                                                          int(bootstrap_connection_info[1]),
+                                                          "connect,%s" % str(connection_quantity))
 
     def start_server(self):
         self.socket_manager.listen()
@@ -207,14 +253,26 @@ class MiniCoin:
     def stop_server(self):
         self.socket_manager.stop_server()
 
-    def send_message(self, address_string, command, message):
+    def send_message(self, address_string, command, message=""):
+        """
+        Helper function to easily format and send messages over sockets.
+
+        Args:
+            address_string(str): String representation of the target node in form of "IP:PORT"
+            command(str): The message string that identifies the reason for contacting the node.
+            message(str): The data to accompany the request being sent.
+
+        Returns:
+            str: The response from the target.
+        """
         address = address_string.split(":")
         separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
-        self.socket_manager.send_message(address[0], int(address[1]), separated_message)
-        """
-        Sends a message over sockets and returns the response.
-        """
-        pass
+        response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
+        if response == "CONNECTION ERROR":
+            if address_string in MiniCoin.peers:
+                MiniCoin.peers.remove(address_string)
+        if len(MiniCoin.peers) == 0:
+            self.get_peers_from_bootstrap()
 
     def got_message(self, address, message):
         """
@@ -306,10 +364,21 @@ class MiniCoin:
         Args:
             transaction(Transaction): The new transaction.
         """
-        pass
+        for connection in MiniCoin.peers:
+            threading.Thread(target=self.send_message, args=(connection, "new transaction", str(transaction))).start()
 
     def propagate_block(self, block):
-        pass
+        """
+        Forwards a block to all peers.
+
+        Args:
+            block(Block): Block to propagate.
+
+        Returns:
+
+        """
+        for connection in MiniCoin.peers:
+            threading.Thread(target=self.send_message, args=(connection, "new block", str(block))).start()
 
     def __announce_minted_block(self, block):
         """
@@ -321,6 +390,15 @@ class MiniCoin:
         if self.validate_block(block):
             MiniCoin.no_new_block = False
             self.ledger.add_block(block)
+
+    def __got_new_transaction(self, transaction):
+        pass
+
+    def __got_new_block(self, block):
+        pass
+
+    def sync_ledger(self):
+        pass
 
 
 if __name__ == '__main__':
@@ -336,8 +414,14 @@ if __name__ == '__main__':
 
     # TODO - Delete this, only used for testing atm.
     random.seed()
+    genesis_tx_hash = HashFunctions.hash_input("genesis")
+    genesis_transaction = Transaction(genesis_tx_hash, "genesis")
+    genesis = Block(0, [genesis_transaction], "0")
+    start_time = time.now()
     while True:
         rand_num = random.random()
-        hash_value = HashFunctions.hash_input(rand_num)
+        genesis.nonce = rand_num
+        hash_value = HashFunctions.hash_input(genesis)
         if hash_value[:6] == "00ff00":
-            print("Nonce: %s, Hash: %s" % (str(rand_num), hash_value))
+            print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, time.now() - start_time))
+            break
