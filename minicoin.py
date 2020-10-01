@@ -53,6 +53,9 @@ class Transaction:
 
     @staticmethod
     def transaction_from_string(transaction_string):
+        """
+        Builds a transaction from its string representation.
+        """
         split_tx_string = transaction_string.split(", ")
         return Transaction(split_tx_string[0], split_tx_string[1])
 
@@ -181,6 +184,9 @@ class Ledger:
 
     @staticmethod
     def ledger_from_string(ledger_string):
+        """
+        Builds a ledger from its string representation.
+        """
         if type(ledger_string) == list:
             ledger_string = ledger_string[0]
         ledger_list = []
@@ -242,6 +248,13 @@ class Block:
         return return_string
 
     def to_string(self):
+        """
+        Converts a block to a human readable string.
+
+        Returns:
+            str: Human readable string representing a block.
+
+        """
         block_id = "GENESIS BLOCK" if self.block_id == 0 else str(self.block_id)
         return_string = "Block ID: %s\nNonce: %s\nPrevious Blocks Hash: %s\n" % (block_id, str(self.nonce),
                                                                                str(self.previous_block_hash))
@@ -315,6 +328,9 @@ class MiniCoin:
         self.socket_manager = SocketManager(self, port=int(port))
 
     def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
+        """
+        Queries the bootstrap node for a list of active peers.
+        """
         print("\nQuerying bootstrap for peers...\n")
         peers = self.send_message(connection_string, "connect", str(connection_quantity))
         if peers[0] == "nodes" and type(peers) == list and len(peers) > 1:
@@ -325,6 +341,9 @@ class MiniCoin:
                 MiniCoin.semaphore.release()
 
     def start_server(self):
+        """
+        Starts the socket server for node connections and begins the background threads for blockchain maintenance.
+        """
         time.sleep(1)
         self.get_peers_from_bootstrap()
         self.socket_manager.listen()
@@ -333,6 +352,9 @@ class MiniCoin:
         threading.Thread(target=self.__threaded_sync_ledger).start()
 
     def __threaded_sync_ledger(self):
+        """
+        Helper function for looping a thread which will ensure the ledger remains in sync with other nodes.
+        """
         while not MiniCoin.shutdown:
             time.sleep(MiniCoin.REFRESH_RATE)
             self.sync_ledger()
@@ -384,10 +406,11 @@ class MiniCoin:
                 - "send ledger"
                 - "check ledger"
                 - "pretty print"
+                - "alive?"
         """
         parsed_message = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
         if "127.0.0.1:%s" % parsed_message[1] not in MiniCoin.peers and len(MiniCoin.peers) < MiniCoin.MAX_CONNECTIONS \
-                and "127.0.0.1:%s" % parsed_message[1] != self.address_string:
+                and "127.0.0.1:%s" % parsed_message[1] != self.address_string and parsed_message[0] != "alive?":
             MiniCoin.semaphore.acquire()
             MiniCoin.peers.append("127.0.0.1:%s" % parsed_message[1])
             MiniCoin.semaphore.release()
@@ -536,6 +559,9 @@ class MiniCoin:
             self.propagate_block(block)
 
     def __got_new_transaction(self, transaction):
+        """
+        A new transaction has been received.
+        """
         MiniCoin.semaphore.acquire()
         is_new = MiniCoin.mem_pool.add_tx(transaction)
         MiniCoin.semaphore.release()
@@ -543,6 +569,13 @@ class MiniCoin:
             self.announce_transaction(transaction)
 
     def __got_new_block(self, block):
+        """
+        A new block has been received, ensure it is valid and not already present in the nodes current chain.
+        If it is both new and valid, append it and announce its existence to all peers, otherwise ignore.
+
+        Args:
+            block(Block): New block.
+        """
         is_new = self.validate_block(block)
         if is_new:
             print("\nNew block received:\n%s" % str(block))
@@ -605,6 +638,14 @@ class MiniCoin:
             print("\nLedger is up to date!\n")
 
     def check_ledger(self):
+        """
+        Fields a request from a peer, responding with some information about the state of this nodes ledger.
+
+        Returns:
+            str: A string detailing the current ledger information in the form of:
+                current length, the hash of the head block, the hash of the genesis block.
+                Separated by colons.
+        """
         MiniCoin.semaphore.acquire()
         genesis_hash = MiniCoin.ledger.get_genesis_block().block_hash
         head_block_hash = MiniCoin.ledger.get_last_block().block_hash
@@ -613,6 +654,13 @@ class MiniCoin:
         return "%s:%s:%s" % (blockchain_length, head_block_hash, genesis_hash)
 
     def request_ledger(self, target_address_string):
+        """
+        Requests a copy of the ledger from a specific peer.
+
+        Args:
+            target_address_string(str): The address of the peer to send the request to.
+
+        """
         MiniCoin.ledger_sync = False
         response = self.send_message(target_address_string, "send ledger")
         peer_ledger = Ledger.ledger_from_string(response)
@@ -622,10 +670,16 @@ class MiniCoin:
         MiniCoin.semaphore.release()
 
     def send_ledger(self):
+        """
+        Returns a copy of this nodes ledger as a string.
+        """
         print("\nA peer has requested a copy of our ledger, sending...\n")
         return str(MiniCoin.ledger)
 
     def pretty_print(self):
+        """
+        Simple function to print the information about this node in a human readable form.
+        """
         MiniCoin.semaphore.acquire()
         print("Node address: %s\n"
               "***Connected Nodes***\n" % self.address_string)
@@ -640,6 +694,9 @@ class MiniCoin:
         MiniCoin.semaphore.release()
 
     def request_peers_print(self):
+        """
+        Sends a request to all peers asking them to print their details locally.
+        """
         MiniCoin.semaphore.acquire()
         for address in MiniCoin.peers:
             self.send_message(address, "pretty print")
@@ -695,22 +752,3 @@ if __name__ == '__main__':
                   "If not starting a bootstrap node you must also specify a port number to listen on.")
     except KeyboardInterrupt:
         node.stop_server()
-
-    # TODO - Delete this, only used for testing atm.
-    # random.seed()
-    # genesis_tx_hash = HashFunctions.hash_input("genesis")
-    # genesis_transaction = Transaction(genesis_tx_hash, "genesis")
-    # genesis = Block(0, [genesis_transaction], "0")
-    # start_time = datetime.now()
-    # count = 0
-    # total_time = 0
-    # while count < 20:
-    #     rand_num = random.random()
-    #     genesis.nonce = rand_num
-    #     hash_value = HashFunctions.hash_input(genesis)
-    #     if hash_value[:6] == "00ff00":
-    #         print("%s\nHash = %s\nTook %s" % (str(genesis), hash_value, datetime.now() - start_time))
-    #         count += 1
-    #         total_time += int((datetime.now() - start_time).microseconds)
-    #         start_time = datetime.now()
-    # print("Avg time: %s" % str(total_time / 20))
