@@ -328,6 +328,7 @@ class MiniCoin:
         time.sleep(1)
         self.get_peers_from_bootstrap()
         self.socket_manager.listen()
+        self.sync_ledger()
         MiniCoin.shutdown = False
         threading.Thread(target=self.__threaded_sync_ledger).start()
 
@@ -356,9 +357,7 @@ class MiniCoin:
         separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) + \
                             SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
         response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
-        print(str(response))
         if response == "CONNECTION ERROR":
-            print("Remove failed connection") # TODO
             MiniCoin.semaphore.acquire()
             if "%s:%s" % (address[0], str(address[1])) in MiniCoin.peers:
                 MiniCoin.peers.remove("%s:%s" % (address[0], str(address[1])))
@@ -453,18 +452,19 @@ class MiniCoin:
             MiniCoin.semaphore.acquire()
             while MiniCoin.no_new_block and MiniCoin.ledger_sync and mining_block.block_id == MiniCoin.ledger.size() \
                     and MiniCoin.active_mining:
+                MiniCoin.semaphore.release()
                 # While a block has not been found and node considers its ledger up to date, generate a random nonce,
                 # has the mining block and if it conforms to the hash pattern return it, otherwise repeat.
-                MiniCoin.semaphore.release()
                 random_nonce = random.random()
                 mining_block.nonce = random_nonce
                 block_hash = HashFunctions.hash_input(mining_block)
-                time.sleep(.1)
                 MiniCoin.semaphore.acquire()
                 if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN and MiniCoin.no_new_block:
+                    MiniCoin.semaphore.release()
                     mining_block.block_hash = block_hash
                     print("\nNew block discovered:\n%s" % str(mining_block))
                     self.__announce_minted_block(mining_block)
+                    MiniCoin.semaphore.acquire()
             MiniCoin.semaphore.release()
             time.sleep(1)
         return None
@@ -681,10 +681,11 @@ if __name__ == '__main__':
             if option_dict["--mine"] is not None:
                 node.start_mining()
             elif option_dict["--print"] is not None:
-                time.sleep(10)
-                node.pretty_print()
-                time.sleep(5)
-                node.request_peers_print()
+                while True:
+                    time.sleep(10)
+                    node.pretty_print()
+                    time.sleep(5)
+                    node.request_peers_print()
         elif option_dict["--type"] == "node-ui" and option_dict["--port"] is not None:
             node = ClientInterface(int(option_dict["--port"]))
             node.start_server()
@@ -692,13 +693,6 @@ if __name__ == '__main__':
         else:
             print("Please specify a --type as \"bootstrap\", \"node\" or \"client\"!\n"
                   "If not starting a bootstrap node you must also specify a port number to listen on.")
-    except KeyboardInterrupt:
-        node.stop_server()
-
-    # Loop until interrupt
-    try:
-        while True:
-            time.sleep(1)
     except KeyboardInterrupt:
         node.stop_server()
 
