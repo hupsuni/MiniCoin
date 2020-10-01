@@ -1,21 +1,23 @@
 """
 TO RUN:
-1. Start Bootstrap Node: python3 minicoin.py --type bootstrap
-2. Start 1 or more Nodes or Miners:
-    Standalone Node: python3 minicoin.py --type node --port 5001
-    Mining Node (NO UI): python3 minicoin.py --type node --port 5002 --mine
-3. Start a Node with a UI (Incomplete)
-    Node with UI: python3 minicoin.py --type node-ui --port 5003
-4. Optional if not running UI.
+1. Start Bootstrap Node (Required):
+    - python3 minicoin.py --type bootstrap
+2. Start 1 or more Nodes or Miners with or without a UI:
+    Standalone Node:
+        - python3 minicoin.py --type node --port 5001
+    Mining Node (NO UI):
+        - python3 minicoin.py --type node --port 5002 --mine
+    Node with UI:
+        - python3 minicoin.py --type node-ui --port 5003
+
+Optional if not running UI.
     Start a node that will sync with the network, wait 10 seconds, print its data, wait 5 seconds and then
-    request all its peers also print their data locally.
-    - python3 minicoin.py --type node --port 5010 --print
+    request all its peers also print their data locally on repeat.
+        - python3 minicoin.py --type node --port 5010 --print
 """
 import getopt
-import math
 import sys
 from concurrent.futures.thread import ThreadPoolExecutor
-from datetime import datetime
 import time
 from hashlib import sha3_256
 from custom_exceptions import NoNonceException
@@ -257,7 +259,7 @@ class Block:
         """
         block_id = "GENESIS BLOCK" if self.block_id == 0 else str(self.block_id)
         return_string = "Block ID: %s\nNonce: %s\nPrevious Blocks Hash: %s\n" % (block_id, str(self.nonce),
-                                                                               str(self.previous_block_hash))
+                                                                                 str(self.previous_block_hash))
         for transaction in self.tx:
             return_string += "Transaction: %s\n" % str(transaction)
         return return_string
@@ -379,8 +381,8 @@ class MiniCoin:
             str: The response from the target.
         """
         address = address_string.split(":")
-        separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) + \
-                            SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
+        separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) \
+                            + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
         response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
         if response == "CONNECTION ERROR":
             MiniCoin.semaphore.acquire()
@@ -773,7 +775,7 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
               "*  5. Tell peers to print their information                        *\n"
               "*  0. Quit                                                         *\n"
               "********************************************************************\n" % verbose)
-    
+
     def pretty_print(self, force=False):
         if force:
             super(ClientInterface, self).pretty_print()
@@ -790,6 +792,7 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
         for tx in tx_list:
             self._got_new_transaction(tx)
         print("\n\n*************************\n*Transactions announced!*\n*************************\n")
+
 
 if __name__ == '__main__':
     # Parse CLI arguments
