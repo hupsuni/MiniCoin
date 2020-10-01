@@ -184,7 +184,7 @@ class Ledger:
         if ledger_array[0] == "LEDGER:" and ledger_array[-1] == "LEDGER:":
             for block in ledger_array[1:-1]:
                 ledger_list.append(Block.block_from_string(block))
-        return ledger_array.copy()
+        return ledger_list.copy()
 
     def replace_blockchain(self, block_chain):
         if len(block_chain) > len(self.block_chain):
@@ -421,8 +421,8 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
                 A newly minted block. Returns None if loop is exited without solving the block.
         """
         # Loop until user input.
-        random.seed()
         while MiniCoin.active_mining:
+            random.seed()
             print("Mining blocks in new thread...")
             # Generate a new block to test random nonce on.
             if block is None:
@@ -542,7 +542,6 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         longest_chain = [0]
         address = None
         for future in future_list:
-            print(str(future[0].result()))
             result = future[0].result()[0].split(":")
             if int(result[0]) > int(longest_chain[0]):
                 longest_chain = result
