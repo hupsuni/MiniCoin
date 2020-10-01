@@ -177,6 +177,8 @@ class Ledger:
 
     @staticmethod
     def ledger_from_string(ledger_string):
+        if type(ledger_string) == list:
+            ledger_string = ledger_string[0]
         ledger_list = []
         ledger_array = ledger_string.split("BLOCK:")
         if ledger_array[0] == "LEDGER:" and ledger_array[-1] == "LEDGER:":
@@ -235,6 +237,14 @@ class Block:
             return_string += "\n%s" % str(transaction)
         return return_string
 
+    def to_string(self):
+        block_id = "GENESIS BLOCK" if self.block_id == 0 else str(self.block_id)
+        return_string = "Block ID: %s\nNonce: %s\nPrevious Blocks Hash: %s\n" % (block_id, str(self.nonce),
+                                                                               str(self.previous_block_hash))
+        for transaction in self.tx:
+            return_string += "Transaction: %s\n" % str(transaction)
+        return return_string
+
     @staticmethod
     def block_from_string(block_as_string):
         """
@@ -285,6 +295,8 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
     DEFAULT_BOOTSTRAP_NODE = "127.0.0.1:5000"
     HASH_PATTERN = "00ff00"
     MAX_CONNECTIONS = 5
+    REFRESH_RATE = 45
+    shutdown = False
     active_mining = False
     ledger_sync = True
     no_new_block = False
@@ -302,13 +314,22 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         peers = self.send_message(connection_string, "connect", str(connection_quantity))
         if peers[0] == "nodes" and type(peers) == list and len(peers) > 1:
             for address in peers[1:]:
-                MiniCoin.peers.append(address)
+                if address != self.address_string and address not in MiniCoin.peers:
+                    MiniCoin.peers.append(address)
 
     def start_server(self):
         self.get_peers_from_bootstrap()
         self.socket_manager.listen()
+        MiniCoin.shutdown = False
+        threading.Thread(self.sync_ledger()).start()
+
+    def __threaded_sync_ledger(self):
+        while not MiniCoin.shutdown:
+            time.sleep(MiniCoin.REFRESH_RATE)
+            self.sync_ledger()
 
     def stop_server(self):
+        MiniCoin.shutdown = True
         self.socket_manager.stop_server()
 
     def send_message(self, address_string, command, message=""):
@@ -418,7 +439,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
                 block_hash = HashFunctions.hash_input(mining_block)
                 if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN and MiniCoin.no_new_block:
                     mining_block.block_hash = block_hash
-                    print("New block discovered:\n%s" % str(mining_block))
+                    print("\nNew block discovered:\n%s" % str(mining_block))
                     self.__announce_minted_block(mining_block)
             time.sleep(1)
         return None
@@ -433,7 +454,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         Returns:
             bool: True if block is found valid, False otherwise.
         """
-        print("Validating new block:\n%s" % str(block))
+        print("\nValidating new block:\n%s" % str(block))
         hash_to_validate = block.block_hash
         current_head_block = MiniCoin.ledger.get_last_block()
         # All the following requirements must be met for this block to be a valid head of the current ledger.
@@ -465,6 +486,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
 
         """
         for connection in MiniCoin.peers:
+            print("\nPropagating block: %s to peer: %s\n" % (str(block.block_id), connection))
             threading.Thread(target=self.send_message, args=(connection, "new block", str(block))).start()
 
     def __announce_minted_block(self, block):
@@ -492,7 +514,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
     def __got_new_block(self, block):
         is_new = self.validate_block(block)
         if is_new:
-            print("New block received:\n%s" % str(block))
+            print("\nNew block received:\n%s" % str(block))
             MiniCoin.semaphore.acquire()
             MiniCoin.ledger.add_block(block)
             MiniCoin.semaphore.release()
@@ -501,12 +523,14 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
     def sync_ledger(self):
         # Make threads for each connection.
         # Connect to the node with longest blockchain and request it if greater than current.
+        print("\nChecking ledger is up to date...\n")
         future_list = []
         executor = ThreadPoolExecutor()
         # Create threads.
         for address in MiniCoin.peers:
-            future_list.append([executor.submit(self.send_message, [address, "check ledger"]), address])
+            future_list.append([executor.submit(self.send_message, address, "check ledger"), address])
         calls_complete = False
+
         # Block until all calls complete.
         while not calls_complete:
             calls_complete = True
@@ -518,13 +542,15 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         longest_chain = [0]
         address = None
         for future in future_list:
-            result = future[0].result().split(":")
+            print(str(future[0].result()))
+            result = future[0].result()[0].split(":")
             if int(result[0]) > int(longest_chain[0]):
                 longest_chain = result
                 address = future[1]
         # Check if longest chain is longer than ours and both share same genesis block.
         if MiniCoin.ledger.size() < int(longest_chain[0]) and \
                 longest_chain[2] == MiniCoin.ledger.get_genesis_block().block_hash:
+            print("\nLedger is out of sync, requesting update from peer: %s\n" % address)
             # Request new blockchain and replace ours with it.
             new_ledger = self.send_message(address, "send ledger")
             MiniCoin.ledger.replace_blockchain(Ledger.ledger_from_string(new_ledger))
@@ -547,7 +573,20 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         MiniCoin.semaphore.release()
 
     def send_ledger(self):
+        print("\nA peer has requested a copy of our ledger, sending...\n")
         return str(MiniCoin.ledger)
+
+    def pretty_print(self):
+        print("Node address: %s\n"
+              "***Connected Nodes***\n" % self.address_string)
+        for address in MiniCoin.peers:
+            print("%s\n" % address)
+        print("*****Blockchain*****\n")
+        for block in MiniCoin.ledger.block_chain:
+            print("%s" % block.to_string())
+        print("\n***Mem Pool***\n")
+        for tx in MiniCoin.mem_pool.tx:
+            print("Transaction: %s\n" % str(tx))
 
 
 class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.

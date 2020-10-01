@@ -35,9 +35,16 @@ class BootStrap:
                 random.seed()
                 index = random.randint(0, len(self.node_list))
                 connection_list = []
+                skip = 0
                 for i in range(0, num_connections):
-                    selected_node_index = (index + i) % len(self.node_list)
-                    connection_list.append(self.node_list[selected_node_index])
+                    selected_node_index = (index + skip + i) % len(self.node_list)
+                    if self.node_list[selected_node_index] != "127.0.0.1:%s" % message[1]:
+                        connection_list.append(self.node_list[selected_node_index])
+                    elif skip == 1:
+                        break
+                    else:
+                        skip = 1
+                        i -= 1
             ret_message = "nodes"
             for details in connection_list:
                 ret_message += SocketManager.MESSAGE_SEPARATOR_PATTERN + str(details)
