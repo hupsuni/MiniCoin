@@ -40,18 +40,18 @@ class BootStrap:
                     selected_node_index = (index + skip + i) % len(self.node_list)
                     if self.node_list[selected_node_index] != "127.0.0.1:%s" % message[1]:
                         connection_list.append(self.node_list[selected_node_index])
-                    elif skip == 1:
-                        break
                     else:
-                        skip = 1
+                        skip += 1
                         i -= 1
+                        if skip > 5:
+                            break
             ret_message = "nodes"
             for details in connection_list:
                 ret_message += SocketManager.MESSAGE_SEPARATOR_PATTERN + str(details)
-
-            if address not in self.node_list and message_csv != "client connect":
-                self.node_list.append(str(address[0]) + ":" + str(message_csv[1]))
-                print("New connection from: %s" % str(address))
+            address_string = str(address[0]) + ":" + str(message_csv[1])
+            if address_string not in self.node_list and message_csv != "client connect":
+                self.node_list.append(address_string)
+                print("New connection from: %s" % str(address_string))
         return ret_message
 
     def get_node_list(self):

@@ -291,7 +291,7 @@ class HashFunctions:
         return hashed.hexdigest()
 
 
-class MiniCoin:  # TODO - Make a ledger syncing thread
+class MiniCoin:
     """
     The MiniCoin Nodes represented as a class.
     """
@@ -299,7 +299,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
     DEFAULT_BOOTSTRAP_NODE = "127.0.0.1:5000"
     HASH_PATTERN = "00ff00"
     MAX_CONNECTIONS = 5
-    REFRESH_RATE = 20
+    REFRESH_RATE = 45
     shutdown = False
     active_mining = False
     ledger_sync = True
@@ -315,13 +315,17 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         self.socket_manager = SocketManager(self, port=int(port))
 
     def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
+        print("\nQuerying bootstrap for peers...\n")
         peers = self.send_message(connection_string, "connect", str(connection_quantity))
         if peers[0] == "nodes" and type(peers) == list and len(peers) > 1:
             for address in peers[1:]:
+                MiniCoin.semaphore.acquire()
                 if address != self.address_string and address not in MiniCoin.peers:
                     MiniCoin.peers.append(address)
+                MiniCoin.semaphore.release()
 
     def start_server(self):
+        time.sleep(1)
         self.get_peers_from_bootstrap()
         self.socket_manager.listen()
         MiniCoin.shutdown = False
@@ -352,9 +356,13 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) + \
                             SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
         response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
-        if response[0] == "CONNECTION ERROR":
-            if address_string in MiniCoin.peers:
-                MiniCoin.peers.remove(address_string)
+        print(str(response))
+        if response == "CONNECTION ERROR":
+            print("Remove failed connection") # TODO
+            MiniCoin.semaphore.acquire()
+            if "%s:%s" % (address[0], str(address[1])) in MiniCoin.peers:
+                MiniCoin.peers.remove("%s:%s" % (address[0], str(address[1])))
+            MiniCoin.semaphore.release()
         if len(MiniCoin.peers) == 0 and command != "connect":
             self.get_peers_from_bootstrap()
         return response.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
@@ -442,17 +450,22 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
                 MiniCoin.semaphore.release()
             else:
                 mining_block = block
+            MiniCoin.semaphore.acquire()
             while MiniCoin.no_new_block and MiniCoin.ledger_sync and mining_block.block_id == MiniCoin.ledger.size() \
                     and MiniCoin.active_mining:
                 # While a block has not been found and node considers its ledger up to date, generate a random nonce,
                 # has the mining block and if it conforms to the hash pattern return it, otherwise repeat.
+                MiniCoin.semaphore.release()
                 random_nonce = random.random()
                 mining_block.nonce = random_nonce
                 block_hash = HashFunctions.hash_input(mining_block)
+                time.sleep(.1)
+                MiniCoin.semaphore.acquire()
                 if block_hash[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN and MiniCoin.no_new_block:
                     mining_block.block_hash = block_hash
                     print("\nNew block discovered:\n%s" % str(mining_block))
                     self.__announce_minted_block(mining_block)
+            MiniCoin.semaphore.release()
             time.sleep(1)
         return None
 
@@ -467,6 +480,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
             bool: True if block is found valid, False otherwise.
         """
         print("\nValidating new block:\n%s" % str(block))
+        MiniCoin.semaphore.acquire()
         hash_to_validate = block.block_hash
         current_head_block = MiniCoin.ledger.get_last_block()
         # All the following requirements must be met for this block to be a valid head of the current ledger.
@@ -474,7 +488,11 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
                 block.previous_block_hash == current_head_block.block_hash and \
                 HashFunctions.hash_input(block) == block.block_hash and \
                 hash_to_validate[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN:
+            MiniCoin.semaphore.release()
+            print("\nNew Block is Acceptable\n")
             return True
+        MiniCoin.semaphore.release()
+        print("\nNew Block Invalid\n")
         return False
 
     def announce_transaction(self, transaction):
@@ -512,6 +530,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
             MiniCoin.semaphore.acquire()
             MiniCoin.no_new_block = False
             MiniCoin.ledger.add_block(block)
+            time.sleep(1)
             MiniCoin.no_new_block = True
             MiniCoin.semaphore.release()
             self.propagate_block(block)
@@ -559,26 +578,31 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         address = None
         MiniCoin.semaphore.acquire()
         for future in future_list:
-            result = future[0].result()[0].split(":")
-            print(result) # TODO
-            if result[0] != "CONNECTION ERROR" and int(result[0]) > int(longest_chain[0]):
-                longest_chain = result
-                address = future[1]
+            return_value = future[0].result()[0]
+            if return_value is not None and return_value != "":
+                result = return_value.split(":")
+                if result[0] != "CONNECTION ERROR" and int(result[0]) > int(longest_chain[0]):
+                    longest_chain = result
+                    address = future[1]
         current_size = MiniCoin.ledger.size()
         genesis_hash = MiniCoin.ledger.get_genesis_block().block_hash
         MiniCoin.semaphore.release()
         # Check if longest chain is longer than ours and both share same genesis block.
         if current_size < int(longest_chain[0]) and longest_chain[2] == genesis_hash:
             print("\nLedger is out of sync, requesting update from peer: %s\n" % address)
-            print("Current Size: %s" % current_size) # TODO
             # Request new blockchain and replace ours with it.
             new_ledger = self.send_message(address, "send ledger")
-            print(new_ledger)
             MiniCoin.semaphore.acquire()
+            MiniCoin.ledger_sync = False
             MiniCoin.ledger.replace_blockchain(Ledger.ledger_from_string(new_ledger))
+            print("New ledger accepted")
             MiniCoin.semaphore.release()
-            print("New ledger accepted, current length: %s" % str(MiniCoin.ledger.size()))
-
+            time.sleep(1)
+            MiniCoin.semaphore.acquire()
+            MiniCoin.ledger_sync = True
+            MiniCoin.semaphore.release()
+        else:
+            print("\nLedger is up to date!\n")
 
     def check_ledger(self):
         MiniCoin.semaphore.acquire()
@@ -668,6 +692,13 @@ if __name__ == '__main__':
         else:
             print("Please specify a --type as \"bootstrap\", \"node\" or \"client\"!\n"
                   "If not starting a bootstrap node you must also specify a port number to listen on.")
+    except KeyboardInterrupt:
+        node.stop_server()
+
+    # Loop until interrupt
+    try:
+        while True:
+            time.sleep(1)
     except KeyboardInterrupt:
         node.stop_server()
 
