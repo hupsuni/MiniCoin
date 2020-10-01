@@ -348,7 +348,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         separated_message = str(command) + SocketManager.MESSAGE_SEPARATOR_PATTERN + str(self.port) + \
                             SocketManager.MESSAGE_SEPARATOR_PATTERN + str(message)
         response = self.socket_manager.send_message(address[0], int(address[1]), separated_message)
-        if response == "CONNECTION ERROR":
+        if response[0] == "CONNECTION ERROR":
             if address_string in MiniCoin.peers:
                 MiniCoin.peers.remove(address_string)
         if len(MiniCoin.peers) == 0 and command != "connect":
