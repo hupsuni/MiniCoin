@@ -321,17 +321,20 @@ class MiniCoin:
     mem_pool = MemPool()
     peers = []
     semaphore = threading.Semaphore()
+    verbose = True
 
-    def __init__(self, port):
+    def __init__(self, port, verbose=True):
         self.port = port
         self.address_string = "127.0.0.1:%s" % str(port)
         self.socket_manager = SocketManager(self, port=int(port))
+        MiniCoin.verbose = verbose
 
     def get_peers_from_bootstrap(self, connection_string=DEFAULT_BOOTSTRAP_NODE, connection_quantity=MAX_CONNECTIONS):
         """
         Queries the bootstrap node for a list of active peers.
         """
-        print("\nQuerying bootstrap for peers...\n")
+        if MiniCoin.verbose:
+            print("\nQuerying bootstrap for peers...\n")
         peers = self.send_message(connection_string, "connect", str(connection_quantity))
         if peers[0] == "nodes" and type(peers) == list and len(peers) > 1:
             for address in peers[1:]:
@@ -417,7 +420,7 @@ class MiniCoin:
         if parsed_message[0] == "new block":
             self.__got_new_block(Block.block_from_string(parsed_message[2]))
         elif parsed_message[0] == "new transaction":
-            self.__got_new_transaction(Transaction.transaction_from_string(parsed_message[2]))
+            self._got_new_transaction(Transaction.transaction_from_string(parsed_message[2]))
         elif parsed_message[0] == "check ledger":
             return self.check_ledger()
         elif parsed_message[0] == "send ledger":
@@ -502,7 +505,8 @@ class MiniCoin:
         Returns:
             bool: True if block is found valid, False otherwise.
         """
-        print("\nValidating new block:\n%s" % str(block))
+        if MiniCoin.verbose:
+            print("\nValidating new block:\n%s" % str(block))
         MiniCoin.semaphore.acquire()
         hash_to_validate = block.block_hash
         current_head_block = MiniCoin.ledger.get_last_block()
@@ -512,10 +516,12 @@ class MiniCoin:
                 HashFunctions.hash_input(block) == block.block_hash and \
                 hash_to_validate[0:len(self.HASH_PATTERN)] == self.HASH_PATTERN:
             MiniCoin.semaphore.release()
-            print("\nNew Block is Acceptable\n")
+            if MiniCoin.verbose:
+                print("\nNew Block is Acceptable\n")
             return True
         MiniCoin.semaphore.release()
-        print("\nNew Block Invalid\n")
+        if MiniCoin.verbose:
+            print("\nNew Block Invalid\n")
         return False
 
     def announce_transaction(self, transaction):
@@ -539,7 +545,8 @@ class MiniCoin:
 
         """
         for connection in MiniCoin.peers:
-            print("\nPropagating block: %s to peer: %s\n" % (str(block.block_id), connection))
+            if MiniCoin.verbose:
+                print("\nPropagating block: %s to peer: %s\n" % (str(block.block_id), connection))
             threading.Thread(target=self.send_message, args=(connection, "new block", str(block))).start()
 
     def __announce_minted_block(self, block):
@@ -558,7 +565,7 @@ class MiniCoin:
             MiniCoin.semaphore.release()
             self.propagate_block(block)
 
-    def __got_new_transaction(self, transaction):
+    def _got_new_transaction(self, transaction):
         """
         A new transaction has been received.
         """
@@ -578,7 +585,8 @@ class MiniCoin:
         """
         is_new = self.validate_block(block)
         if is_new:
-            print("\nNew block received:\n%s" % str(block))
+            if MiniCoin.verbose:
+                print("\nNew block received:\n%s" % str(block))
             MiniCoin.semaphore.acquire()
             MiniCoin.ledger.add_block(block)
             MiniCoin.semaphore.release()
@@ -591,7 +599,8 @@ class MiniCoin:
         node it will request a copy of that ledger and, should the genesis block be the same as this nodes genesis block
         it will update its ledger accordingly.
         """
-        print("\nChecking ledger is up to date...\n")
+        if MiniCoin.verbose:
+            print("\nChecking ledger is up to date...\n")
         future_list = []
         executor = ThreadPoolExecutor()
         # Create threads.
@@ -622,20 +631,23 @@ class MiniCoin:
         MiniCoin.semaphore.release()
         # Check if longest chain is longer than ours and both share same genesis block.
         if current_size < int(longest_chain[0]) and longest_chain[2] == genesis_hash:
-            print("\nLedger is out of sync, requesting update from peer: %s\n" % address)
+            if MiniCoin.verbose:
+                print("\nLedger is out of sync, requesting update from peer: %s\n" % address)
             # Request new blockchain and replace ours with it.
             new_ledger = self.send_message(address, "send ledger")
             MiniCoin.semaphore.acquire()
             MiniCoin.ledger_sync = False
             MiniCoin.ledger.replace_blockchain(Ledger.ledger_from_string(new_ledger))
-            print("New ledger accepted")
+            if MiniCoin.verbose:
+                print("New ledger accepted")
             MiniCoin.semaphore.release()
             time.sleep(1)
             MiniCoin.semaphore.acquire()
             MiniCoin.ledger_sync = True
             MiniCoin.semaphore.release()
         else:
-            print("\nLedger is up to date!\n")
+            if MiniCoin.verbose:
+                print("\nLedger is up to date!\n")
 
     def check_ledger(self):
         """
@@ -673,7 +685,8 @@ class MiniCoin:
         """
         Returns a copy of this nodes ledger as a string.
         """
-        print("\nA peer has requested a copy of our ledger, sending...\n")
+        if MiniCoin.verbose:
+            print("\nA peer has requested a copy of our ledger, sending...\n")
         return str(MiniCoin.ledger)
 
     def pretty_print(self):
@@ -706,12 +719,68 @@ class MiniCoin:
 
 class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.
     def __init__(self, port):
-        super().__init__(port)
+        super().__init__(port, verbose=False)
         self.start_server()
 
     def client_interface(self):
-        pass
+        print("Loading menu.... Please wait...")
+        time.sleep(5)
+        choice = ""
+        while choice != "0":
+            self.print_menu()
+            choice = input()
+        self.stop_server()
+        print("Shutting down node... Please wait...")
 
+    def parse_choice(self, choice):
+        if choice == "1":
+            ClientInterface.verbose = not ClientInterface.verbose
+        elif choice == "2":
+            self.start_mining()
+        elif choice == "3":
+            self.tx_flood()
+        elif choice == "4":
+            self.pretty_print(True)
+        elif choice == "5":
+            self.request_peers_print()
+
+    def print_menu(self):
+        print("\n********************************************************************\n"
+              "********************************************************************\n"
+              "************|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|************\n"
+              "************|  Welcome To The MiniCoin User Interface  |************\n"
+              "************|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|************\n"
+              "********************************************************************\n"
+              "********************************************************************\n"
+              "*****************  Please select an option below!  *****************\n"
+              "*------------------------------------------------------------------*\n"
+              "*----- Enter any other option to print this menu at any time! -----*\n"
+              "*------------------------------------------------------------------*\n"
+              "*  1. Turn verbose output %s                                      *\n"
+              "*  2. Start mining                                                 *\n"
+              "*  3. Flood network with random transactions                       *\n"
+              "*  4. Print information about this node                            *\n"
+              "*  5. Tell peers to print their information                        *\n"
+              "*  0. Quit                                                         *\n"
+              "********************************************************************\n"
+              % "Off" if self.verbose else "On "
+              )
+    
+    def pretty_print(self, force=False):
+        if force:
+            super(ClientInterface, self).pretty_print()
+
+    def tx_flood(self):
+        random.seed()
+        print("Generating 20 random transactions and announcing them in 3s...")
+        time.sleep(3)
+        tx_list = []
+        for i in range(0, 20):
+            random_string = "Random Transaction #%s" % str(random.random())[2:]
+            tx_list.append(Transaction(HashFunctions.hash_input(random_string), random_string))
+        for tx in tx_list:
+            self._got_new_transaction(tx)
+        print("\n\n*************************\n*Transactions announced!*\n*************************\n\n")
 
 if __name__ == '__main__':
     # Parse CLI arguments
