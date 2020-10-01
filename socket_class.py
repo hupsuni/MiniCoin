@@ -78,7 +78,7 @@ class SocketManager:
                     else:
                         break
 
-        except (TimeoutError, AttributeError, socket.timeout) as e:
+        except (TimeoutError, AttributeError, socket.timeout, ConnectionError, ConnectionRefusedError) as e:
             print("%s" % e)
         finally:
             client.close()
@@ -107,7 +107,7 @@ class SocketManager:
             socket_connection.close()
             return response.decode()
         except (ConnectionRefusedError, AttributeError, socket.timeout, ConnectionError) as e:
-            print("%s" % e)
+            # print("%s" % e)
             return_value = "CONNECTION ERROR"
         finally:
             socket_connection.close()

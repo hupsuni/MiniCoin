@@ -6,6 +6,10 @@ TO RUN:
     Mining Node (NO UI): python3 minicoin.py --type node --port 5002 --mine
 3. Start a Node with a UI (Incomplete)
     Node with UI: python3 minicoin.py --type node-ui --port 5003
+4. Optional if not running UI.
+    Start a node that will sync with the network, wait 10 seconds, print its data, wait 5 seconds and then
+    request all its peers also print their data locally.
+    - python3 minicoin.py --type node --port 5010 --print
 """
 import getopt
 import math
@@ -295,7 +299,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
     DEFAULT_BOOTSTRAP_NODE = "127.0.0.1:5000"
     HASH_PATTERN = "00ff00"
     MAX_CONNECTIONS = 5
-    REFRESH_RATE = 45
+    REFRESH_RATE = 20
     shutdown = False
     active_mining = False
     ledger_sync = True
@@ -321,7 +325,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         self.get_peers_from_bootstrap()
         self.socket_manager.listen()
         MiniCoin.shutdown = False
-        threading.Thread(self.sync_ledger()).start()
+        threading.Thread(target=self.__threaded_sync_ledger).start()
 
     def __threaded_sync_ledger(self):
         while not MiniCoin.shutdown:
@@ -372,9 +376,11 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
                 - "new transaction"
                 - "send ledger"
                 - "check ledger"
+                - "pretty print"
         """
         parsed_message = message.split(SocketManager.MESSAGE_SEPARATOR_PATTERN)
-        if "127.0.0.1:%s" % parsed_message[1] not in MiniCoin.peers and len(MiniCoin.peers) < MiniCoin.MAX_CONNECTIONS:
+        if "127.0.0.1:%s" % parsed_message[1] not in MiniCoin.peers and len(MiniCoin.peers) < MiniCoin.MAX_CONNECTIONS \
+                and "127.0.0.1:%s" % parsed_message[1] != self.address_string:
             MiniCoin.semaphore.acquire()
             MiniCoin.peers.append("127.0.0.1:%s" % parsed_message[1])
             MiniCoin.semaphore.release()
@@ -386,6 +392,10 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
             return self.check_ledger()
         elif parsed_message[0] == "send ledger":
             return self.send_ledger()
+        elif parsed_message[0] == "pretty print":
+            self.pretty_print()
+        elif parsed_message[0] == "alive?":
+            return True
         return "COMPLETE"
 
     def start_mining(self, block=None):
@@ -426,8 +436,10 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
             print("Mining blocks in new thread...")
             # Generate a new block to test random nonce on.
             if block is None:
+                MiniCoin.semaphore.acquire()
                 mining_block = Block(MiniCoin.ledger.size(), MiniCoin.mem_pool.get_n_tx(Block.TRANSACTIONS_PER_BLOCK),
                                      MiniCoin.ledger.get_last_block().block_hash)
+                MiniCoin.semaphore.release()
             else:
                 mining_block = block
             while MiniCoin.no_new_block and MiniCoin.ledger_sync and mining_block.block_id == MiniCoin.ledger.size() \
@@ -521,8 +533,12 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
             self.propagate_block(block)
 
     def sync_ledger(self):
-        # Make threads for each connection.
-        # Connect to the node with longest blockchain and request it if greater than current.
+        """
+        Designed to be run in background and called infrequently, this function contacts all this nodes peers.
+        It requests some basic information about their ledger. If One or more nodes has a longer ledger than this
+        node it will request a copy of that ledger and, should the genesis block be the same as this nodes genesis block
+        it will update its ledger accordingly.
+        """
         print("\nChecking ledger is up to date...\n")
         future_list = []
         executor = ThreadPoolExecutor()
@@ -541,18 +557,28 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         # Find node with longest list.
         longest_chain = [0]
         address = None
+        MiniCoin.semaphore.acquire()
         for future in future_list:
             result = future[0].result()[0].split(":")
-            if int(result[0]) > int(longest_chain[0]):
+            print(result) # TODO
+            if result[0] != "CONNECTION ERROR" and int(result[0]) > int(longest_chain[0]):
                 longest_chain = result
                 address = future[1]
+        current_size = MiniCoin.ledger.size()
+        genesis_hash = MiniCoin.ledger.get_genesis_block().block_hash
+        MiniCoin.semaphore.release()
         # Check if longest chain is longer than ours and both share same genesis block.
-        if MiniCoin.ledger.size() < int(longest_chain[0]) and \
-                longest_chain[2] == MiniCoin.ledger.get_genesis_block().block_hash:
+        if current_size < int(longest_chain[0]) and longest_chain[2] == genesis_hash:
             print("\nLedger is out of sync, requesting update from peer: %s\n" % address)
+            print("Current Size: %s" % current_size) # TODO
             # Request new blockchain and replace ours with it.
             new_ledger = self.send_message(address, "send ledger")
+            print(new_ledger)
+            MiniCoin.semaphore.acquire()
             MiniCoin.ledger.replace_blockchain(Ledger.ledger_from_string(new_ledger))
+            MiniCoin.semaphore.release()
+            print("New ledger accepted, current length: %s" % str(MiniCoin.ledger.size()))
+
 
     def check_ledger(self):
         MiniCoin.semaphore.acquire()
@@ -576,6 +602,7 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         return str(MiniCoin.ledger)
 
     def pretty_print(self):
+        MiniCoin.semaphore.acquire()
         print("Node address: %s\n"
               "***Connected Nodes***\n" % self.address_string)
         for address in MiniCoin.peers:
@@ -586,6 +613,14 @@ class MiniCoin:  # TODO - Make a ledger syncing thread
         print("\n***Mem Pool***\n")
         for tx in MiniCoin.mem_pool.tx:
             print("Transaction: %s\n" % str(tx))
+        MiniCoin.semaphore.release()
+
+    def request_peers_print(self):
+        MiniCoin.semaphore.acquire()
+        for address in MiniCoin.peers:
+            self.send_message(address, "pretty print")
+            time.sleep(1)
+        MiniCoin.semaphore.release()
 
 
 class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.
@@ -600,11 +635,12 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
 if __name__ == '__main__':
     # Parse CLI arguments
     argv = sys.argv[1:]
-    options, arguments = getopt.getopt(argv, "", ["port=", "type=", "mine"])
+    options, arguments = getopt.getopt(argv, "", ["port=", "type=", "mine", "print"])
     option_dict = {
         "--port": None,
         "--type": None,
-        "--mine": None
+        "--mine": None,
+        "--print": None
     }
     for option in options:
         option_dict[option[0]] = option[1]
@@ -620,6 +656,11 @@ if __name__ == '__main__':
             node.start_server()
             if option_dict["--mine"] is not None:
                 node.start_mining()
+            elif option_dict["--print"] is not None:
+                time.sleep(10)
+                node.pretty_print()
+                time.sleep(5)
+                node.request_peers_print()
         elif option_dict["--type"] == "node-ui" and option_dict["--port"] is not None:
             node = ClientInterface(int(option_dict["--port"]))
             node.start_server()
