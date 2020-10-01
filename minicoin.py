@@ -532,6 +532,8 @@ class MiniCoin:
             transaction(Transaction): The new transaction.
         """
         for connection in MiniCoin.peers:
+            if MiniCoin.verbose:
+                print("\nPropagating New Transaction: %s to peer: %s\n" % (transaction.tx_data, connection))
             threading.Thread(target=self.send_message, args=(connection, "new transaction", str(transaction))).start()
 
     def propagate_block(self, block):
@@ -573,6 +575,8 @@ class MiniCoin:
         is_new = MiniCoin.mem_pool.add_tx(transaction)
         MiniCoin.semaphore.release()
         if is_new:
+            if MiniCoin.verbose:
+                print("\nNew Transaction Received: %s" % transaction.tx_data)
             self.announce_transaction(transaction)
 
     def __got_new_block(self, block):
@@ -588,7 +592,11 @@ class MiniCoin:
             if MiniCoin.verbose:
                 print("\nNew block received:\n%s" % str(block))
             MiniCoin.semaphore.acquire()
+            MiniCoin.ledger_sync = False
             MiniCoin.ledger.add_block(block)
+            MiniCoin.mem_pool.purge_confirmed_tx(block.tx)
+            time.sleep(.1)
+            MiniCoin.ledger_sync = True
             MiniCoin.semaphore.release()
             self.propagate_block(block)
 
@@ -720,7 +728,7 @@ class MiniCoin:
 class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.
     def __init__(self, port):
         super().__init__(port, verbose=False)
-        self.start_server()
+        # self.start_server()
 
     def client_interface(self):
         print("Loading menu.... Please wait...")
@@ -728,7 +736,8 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
         choice = ""
         while choice != "0":
             self.print_menu()
-            choice = input()
+            choice = input("Enter Choice: ")
+            self.parse_choice(choice)
         self.stop_server()
         print("Shutting down node... Please wait...")
 
@@ -745,6 +754,7 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
             self.request_peers_print()
 
     def print_menu(self):
+        verbose = "Off" if ClientInterface.verbose else "On "
         print("\n********************************************************************\n"
               "********************************************************************\n"
               "************|~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~|************\n"
@@ -762,13 +772,12 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
               "*  4. Print information about this node                            *\n"
               "*  5. Tell peers to print their information                        *\n"
               "*  0. Quit                                                         *\n"
-              "********************************************************************\n"
-              % "Off" if self.verbose else "On "
-              )
+              "********************************************************************\n" % verbose)
     
     def pretty_print(self, force=False):
         if force:
             super(ClientInterface, self).pretty_print()
+            x = input("Press ENTER to continue...")
 
     def tx_flood(self):
         random.seed()
@@ -780,7 +789,7 @@ class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use fo
             tx_list.append(Transaction(HashFunctions.hash_input(random_string), random_string))
         for tx in tx_list:
             self._got_new_transaction(tx)
-        print("\n\n*************************\n*Transactions announced!*\n*************************\n\n")
+        print("\n\n*************************\n*Transactions announced!*\n*************************\n")
 
 if __name__ == '__main__':
     # Parse CLI arguments
