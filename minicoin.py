@@ -522,8 +522,8 @@ class MiniCoin:
                 print("\nNew Block is Acceptable\n")
             return True
         MiniCoin.semaphore.release()
-        if MiniCoin.verbose:
-            print("\nNew Block Invalid\n")
+        # if MiniCoin.verbose:
+        #     print("\nNew Block Invalid\n")
         return False
 
     def announce_transaction(self, transaction):
@@ -727,7 +727,7 @@ class MiniCoin:
         MiniCoin.semaphore.release()
 
 
-class ClientInterface(MiniCoin):  # TODO - Complete interface for ease of use for demo.
+class ClientInterface(MiniCoin):
     def __init__(self, port):
         super().__init__(port, verbose=False)
         # self.start_server()
